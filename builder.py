@@ -6,76 +6,75 @@ import zipfile
 
 def create_self_extractor(
     source_dir,
+    selected_files,
     template_path="input.py",
     output_py_path="self_extractor.py",
 ):
-    """Compresses a directory, reads a text template, and outputs a self-extracting script."""
+    """Compress only selected files into a self-extracting script."""
     source_dir = os.path.abspath(source_dir)
 
-    # 1. Verify the template file exists before proceeding
     if not os.path.exists(template_path):
         raise FileNotFoundError(
-            f"Could not find template file at: {template_path}. Please create it first."
+            f"Could not find template file at: {template_path}"
         )
 
-    # 2. Create the ZIP archive in memory using LZMA
-    print("Compressing directory data...")
-    zip_buffer = io.BytesIO()
-    excluded_dirs = {
-    ".git",
-    "__pycache__",
-    ".venv",
-    "venv",
-}
+    print("Compressing selected files...")
 
-    excluded_files = {
-        os.path.basename(output_py_path),
-        os.path.basename(template_path),
-    }
+    zip_buffer = io.BytesIO()
 
     with zipfile.ZipFile(
         zip_buffer, "w", compression=zipfile.ZIP_LZMA
     ) as zipf:
 
-        for root, dirs, files in os.walk(source_dir):
+        for relative_path in selected_files:
+            file_path = os.path.join(source_dir, relative_path)
 
-            # Prevent os.walk from entering these directories
-            dirs[:] = [
-                d for d in dirs
-                if d not in excluded_dirs
-            ]
-
-            for file in files:
-                if file in excluded_files:
-                    continue
-
-                file_path = os.path.join(root, file)
-                arcname = os.path.relpath(
-                    file_path,
-                    start=source_dir
+            if not os.path.isfile(file_path):
+                raise FileNotFoundError(
+                    f"Selected file does not exist: {file_path}"
                 )
 
-                zipf.write(file_path, arcname=arcname)
+            # Keep the relative path inside the ZIP
+            zipf.write(
+                file_path,
+                arcname=relative_path
+            )
 
-
-    # 3. Base64 encode the binary ZIP data
+    # Base64 encode ZIP
     zip_buffer.seek(0)
-    b64_data = base64.b64encode(zip_buffer.read()).decode("utf-8")
+    b64_data = base64.b64encode(
+        zip_buffer.read()
+    ).decode("utf-8")
 
-    # 4. Read the standalone template file
+    # Read template
     with open(template_path, "r", encoding="utf-8") as f:
         template_content = f.read()
 
-    # 5. Inject the base64 string into the template placeholder
-    final_script = template_content.replace("{{PAYLOAD}}", b64_data)
+    # Inject payload
+    final_script = template_content.replace(
+        "{{PAYLOAD}}",
+        b64_data
+    )
 
-    # 6. Write the final executable file to disk
+    # Write output
     with open(output_py_path, "w", encoding="utf-8") as f:
         f.write(final_script)
 
-    print(f"Generated standalone self-extractor file: {output_py_path}")
+    print(
+        f"Generated standalone self-extractor file: "
+        f"{output_py_path}"
+    )
 
 
 if __name__ == "__main__":
-    # Compresses everything in the current directory ('.') into 'self_extractor.py'
-    create_self_extractor(".", "input.py", "self_extractor.py")
+    create_self_extractor(
+        ".",
+        selected_files=[
+            "data.db",
+            "main.py",
+            "EncrytedDB.py",
+            "builder.py",
+        ],
+        template_path="input.py",
+        output_py_path="self_extractor.py",
+    )
