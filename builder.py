@@ -6,7 +6,7 @@ import zipfile
 
 def create_self_extractor(
     source_dir,
-    template_path="extractor_template.txt",
+    template_path="input.py",
     output_py_path="self_extractor.py",
 ):
     """Compresses a directory, reads a text template, and outputs a self-extracting script."""
@@ -58,4 +58,4 @@ def create_self_extractor(
 
 if __name__ == "__main__":
     # Compresses everything in the current directory ('.') into 'self_extractor.py'
-    create_self_extractor(".", "extractor_template.txt", "self_extractor.py")
+    create_self_extractor(".", "input.py", "self_extractor.py")
