@@ -21,23 +21,42 @@ def create_self_extractor(
     # 2. Create the ZIP archive in memory using LZMA
     print("Compressing directory data...")
     zip_buffer = io.BytesIO()
+    excluded_dirs = {
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+}
+
+    excluded_files = {
+        os.path.basename(output_py_path),
+        os.path.basename(template_path),
+    }
+
     with zipfile.ZipFile(
         zip_buffer, "w", compression=zipfile.ZIP_LZMA
     ) as zipf:
+
         for root, dirs, files in os.walk(source_dir):
+
+            # Prevent os.walk from entering these directories
+            dirs[:] = [
+                d for d in dirs
+                if d not in excluded_dirs
+            ]
+
             for file in files:
-                # Prevent the builder and template from packing themselves if running in the same folder
-                if file in [
-                    # os.path.basename(__file__),
-                    # Keep the template and builder for rebuiling purposes, but don't include them in the ZIP payload
-                    # template_path,
-                    output_py_path,
-                ]:
+                if file in excluded_files:
                     continue
 
                 file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, start=source_dir)
+                arcname = os.path.relpath(
+                    file_path,
+                    start=source_dir
+                )
+
                 zipf.write(file_path, arcname=arcname)
+
 
     # 3. Base64 encode the binary ZIP data
     zip_buffer.seek(0)

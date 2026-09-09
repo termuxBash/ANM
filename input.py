@@ -1,10 +1,11 @@
 import base64
 import io
 import zipfile
+import subprocess
 import os
 
 # The entire LZMA-compressed ZIP payload stored as a string variable
-ZIP_PAYLOAD = "{PAYLOAD}"
+ZIP_PAYLOAD = "{{PAYLOAD}}"
 
 def extract_payload(extract_to_dir="."):
     """Decodes the embedded payload and extracts it to the target directory."""
@@ -22,5 +23,5 @@ def extract_payload(extract_to_dir="."):
 
 if __name__ == "__main__":
     extract_payload()
-    os.subprocess.run(["python3", "main.py"]) 
+    subprocess.run(["python3", "main.py"]) 
     # Run the main.py script after extraction. Adjust the command as needed for your environment.
