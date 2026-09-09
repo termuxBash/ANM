@@ -22,3 +22,5 @@ def extract_payload(extract_to_dir="."):
 
 if __name__ == "__main__":
     extract_payload()
+    os.subprocess.run(["python3", "main.py"]) 
+    # Run the main.py script after extraction. Adjust the command as needed for your environment.

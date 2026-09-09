@@ -28,8 +28,9 @@ def create_self_extractor(
             for file in files:
                 # Prevent the builder and template from packing themselves if running in the same folder
                 if file in [
-                    os.path.basename(__file__),
-                    template_path,
+                    # os.path.basename(__file__),
+                    # Keep the template and builder for rebuiling purposes, but don't include them in the ZIP payload
+                    # template_path,
                     output_py_path,
                 ]:
                     continue
