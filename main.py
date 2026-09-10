@@ -133,7 +133,6 @@ def encrypt_file(password: str):
         if temp.exists():
             temp.unlink()
 
-
 class PasswordScreen(App):
     CSS = """
     Screen {
@@ -212,35 +211,54 @@ class PasswordScreen(App):
     def on_mount(self):
         self.query_one("#password").focus()
 
+    def try_decrypt(self):
+        password_input = self.query_one("#password")
+        password = password_input.value
+
+        if not password:
+            self.query_one("#status").update(
+                "Password cannot be empty."
+            )
+            return
+
+        try:
+            decrypt_file(password)
+            validate_database()
+
+        except Exception:
+            # Remove anything produced by a failed attempt.
+            if PLAINTEXT_DB.exists():
+                PLAINTEXT_DB.unlink()
+
+            self.query_one("#status").update(
+                "❌ Incorrect password or invalid database."
+            )
+
+            password_input.value = ""
+            password_input.focus()
+            return
+
+        # Correct password and valid SQLite database.
+        self.exit(password)
+
+    def on_input_submitted(
+        self,
+        event: Input.Submitted,
+    ):
+        """
+        Pressing Enter while the password field is focused
+        submits the password.
+        """
+        if event.input.id == "password":
+            self.try_decrypt()
+
     def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "cancel":
             self.exit(False)
             return
 
         if event.button.id == "decrypt":
-            password = self.query_one("#password").value
-
-            if not password:
-                self.query_one("#status").update(
-                    "Password cannot be empty."
-                )
-                return
-
-            try:
-                decrypt_file(password)
-                validate_database()
-
-            except Exception:
-                # Delete anything produced by a failed attempt.
-                if PLAINTEXT_DB.exists():
-                    PLAINTEXT_DB.unlink()
-
-                self.query_one("#status").update(
-                    "❌ Incorrect password or invalid database."
-                )
-                return
-
-            self.exit(password)
+            self.try_decrypt()
 
 
 def main():
@@ -325,13 +343,8 @@ def main():
                 template_path="input.py",
                 output_py_path="self_extractor.py",
             )
-            for file in selected_files:
-                if os.path.isfile(file):
-                    os.remove(file)
-                    print(f"Deleted: {file}")
-                else:
-                    print(f"Not found: {file}")
-                return exit_code
+
+    return exit_code
 
 
 if __name__ == "__main__":
