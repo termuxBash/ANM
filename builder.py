@@ -72,7 +72,7 @@ if __name__ == "__main__":
         selected_files=[
             "data.db",
             "main.py",
-            "EncrytedDB.py",
+            "EncryptedDB.py",
             "builder.py",
         ],
         template_path="input.py",
