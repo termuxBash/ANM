@@ -72,6 +72,7 @@ if __name__ == "__main__":
         selected_files=[
             "data.db.enc",
             "input.py",
+            "app.py",
             "extractor.py",
             "main.py",
             "EncryptedDB.py",

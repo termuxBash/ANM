@@ -13,6 +13,8 @@ from textual.app import App, ComposeResult
 from textual.containers import Container
 from textual.widgets import Button, Footer, Header, Input, Label
 
+from builder import create_self_extractor
+
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -308,8 +310,28 @@ def main():
 
             print("Database encrypted.")
             print("Plaintext database removed.")
-
-    return exit_code
+            print("Rebuilding the self-extractor...")
+            selected_files=[
+                                "data.db.enc",
+                                "input.py",
+                                "extractor.py",
+                                "main.py",
+                                "EncryptedDB.py",
+                                "builder.py",
+                            ]
+            create_self_extractor(
+                ".",
+                selected_files,
+                template_path="input.py",
+                output_py_path="self_extractor.py",
+            )
+            for file in selected_files:
+                if os.path.isfile(file):
+                    os.remove(file)
+                    print(f"Deleted: {file}")
+                else:
+                    print(f"Not found: {file}")
+                return exit_code
 
 
 if __name__ == "__main__":
