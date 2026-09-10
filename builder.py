@@ -70,7 +70,9 @@ if __name__ == "__main__":
     create_self_extractor(
         ".",
         selected_files=[
-            "data.db",
+            "data.db.enc",
+            "input.py",
+            "extractor.py",
             "main.py",
             "EncryptedDB.py",
             "builder.py",

@@ -1,463 +1,316 @@
-import sqlite3
+#!/usr/bin/env python3
 
+import hashlib
+import os
+import secrets
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container
 from textual.widgets import Button, Footer, Header, Input, Label
 
 
-DB_PATH = "data.db"
+BASE_DIR = Path(__file__).resolve().parent
 
-# Database table names
-SHOW_TABLE = "Anime"
-BOOK_TABLE = "Manga"
+ENCRYPTED_DB = BASE_DIR / "data.db.enc"
+PLAINTEXT_DB = BASE_DIR / "data.db"
+APP = BASE_DIR / "app.py"
+
+MAGIC = b"ENCDB01"
+SALT_SIZE = 16
+NONCE_SIZE = 12
+KEY_SIZE = 32
 
 
-class AppTUI(App):
+def derive_key(password: str, salt: bytes) -> bytes:
+    return hashlib.scrypt(
+        password.encode("utf-8"),
+        salt=salt,
+        n=2**14,
+        r=8,
+        p=1,
+        dklen=32,
+    )
+
+
+def decrypt_file(password: str):
+    raw = ENCRYPTED_DB.read_bytes()
+
+    if len(raw) < len(MAGIC) + SALT_SIZE + NONCE_SIZE + 16:
+        raise ValueError("Encrypted file is corrupted.")
+
+    if not raw.startswith(MAGIC):
+        raise ValueError("Invalid encrypted database.")
+
+    offset = len(MAGIC)
+
+    salt = raw[offset:offset + SALT_SIZE]
+    offset += SALT_SIZE
+
+    nonce = raw[offset:offset + NONCE_SIZE]
+    offset += NONCE_SIZE
+
+    ciphertext = raw[offset:]
+
+    key = derive_key(password, salt)
+
+    # Raises an exception for an incorrect password
+    # or modified encrypted data.
+    plaintext = AESGCM(key).decrypt(
+        nonce,
+        ciphertext,
+        MAGIC,
+    )
+
+    temp = PLAINTEXT_DB.with_name("data.db.tmp")
+
+    try:
+        with temp.open("wb") as f:
+            f.write(plaintext)
+            f.flush()
+            os.fsync(f.fileno())
+
+        os.replace(temp, PLAINTEXT_DB)
+
+    finally:
+        if temp.exists():
+            temp.unlink()
+
+
+def validate_database():
+    conn = sqlite3.connect(
+        f"file:{PLAINTEXT_DB}?mode=rw",
+        uri=True,
+    )
+
+    try:
+        result = conn.execute(
+            "PRAGMA integrity_check"
+        ).fetchone()
+
+        if not result or result[0] != "ok":
+            raise ValueError("SQLite integrity check failed.")
+
+    finally:
+        conn.close()
+
+
+def encrypt_file(password: str):
+    data = PLAINTEXT_DB.read_bytes()
+
+    salt = secrets.token_bytes(SALT_SIZE)
+    nonce = secrets.token_bytes(NONCE_SIZE)
+    key = derive_key(password, salt)
+
+    ciphertext = AESGCM(key).encrypt(
+        nonce,
+        data,
+        MAGIC,
+    )
+
+    temp = ENCRYPTED_DB.with_name(
+        ENCRYPTED_DB.name + ".tmp"
+    )
+
+    try:
+        with temp.open("wb") as f:
+            f.write(MAGIC)
+            f.write(salt)
+            f.write(nonce)
+            f.write(ciphertext)
+            f.flush()
+            os.fsync(f.fileno())
+
+        os.replace(temp, ENCRYPTED_DB)
+
+    finally:
+        if temp.exists():
+            temp.unlink()
+
+
+class PasswordScreen(App):
     CSS = """
     Screen {
         align: center middle;
     }
 
-    #form {
+    #box {
         width: 60;
         height: auto;
-        border: round $accent;
-        padding: 1 2;
-    }
-
-    .page {
-        height: auto;
+        border: round cyan;
+        padding: 2 4;
     }
 
     #title {
-        text-align: center;
         text-style: bold;
+        text-align: center;
         margin-bottom: 1;
     }
 
-    Input {
+    #password {
         margin: 1 0;
     }
 
-    #navigation {
-        height: auto;
-        margin-bottom: 1;
+    #buttons {
+        height: 3;
+        align: center middle;
     }
 
-    #navigation Button {
-        width: 1fr;
+    Button {
         margin: 0 1;
     }
 
-    #buttons {
-        height: auto;
-        margin-top: 1;
-    }
-
-    #show_buttons,
-    #book_buttons {
-        height: auto;
-        margin-top: 1;
-    }
-
-    #show_buttons Button,
-    #book_buttons Button {
-        width: 1fr;
-        margin: 0 2;
-    }
-
-
-    #submit {
-        margin-right: 1;
-        background: $success;
-    }
-
-    #quit {
-        margin-left: 1;
-        background: $error;
-    }
-
-    .status {
-        height: auto;
-        margin-top: 1;
+    #status {
+        height: 2;
+        color: yellow;
         text-align: center;
     }
     """
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield Header(show_clock=True)
 
-        with Container(id="form"):
+        with Container(id="box"):
+            yield Label(
+                "🔐  Encrypted SQLite Database",
+                id="title",
+            )
 
-            # Page navigation
-            with Horizontal(id="navigation"):
-                yield Button("Add Show", id="show_page")
-                yield Button("Labeled Books", id="book_page")
+            yield Label(
+                "Enter the database password:"
+            )
 
-            # -------------------------------------------------
-            # SHOW PAGE
-            # -------------------------------------------------
+            yield Input(
+                placeholder="Password",
+                password=True,
+                id="password",
+            )
 
-            with Vertical(id="show_form", classes="page"):
+            yield Label("", id="status")
 
-                yield Label("Add Show", id="show_title")
-
-                yield Input(
-                    placeholder="Code *",
-                    id="show_code",
+            with Container(id="buttons"):
+                yield Button(
+                    "Decrypt",
+                    variant="success",
+                    id="decrypt",
                 )
 
-                yield Input(
-                    placeholder="Name *",
-                    id="show_name",
-                )
-
-                yield Input(
-                    placeholder="Rating (0-20)",
-                    id="show_rating",
-                    type="number",
-                )
-
-                yield Input(
-                    placeholder="Manga Code",
-                    id="show_mg_code",
-                )
-
-                with Horizontal(id="show_buttons"):
-                    yield Button(
-                        "Quit",
-                        id="quit_show",
-                        variant="error",
-                    )
-                    yield Button(
-                        "Submit",
-                        id="submit_show",
-                        variant="success",
-                    )
-
-                    
-
-                yield Label(
-                    "",
-                    id="show_status",
-                    classes="status",
-                )
-
-            # -------------------------------------------------
-            # BOOK PAGE
-            # -------------------------------------------------
-
-            with Vertical(id="book_form", classes="page"):
-
-                yield Label("Labeled Books", id="book_title")
-
-                yield Input(
-                    placeholder="Code *",
-                    id="book_code",
-                )
-
-                yield Input(
-                    placeholder="Name *",
-                    id="book_name",
-                )
-
-                yield Input(
-                    placeholder="Reads",
-                    id="book_reads",
-                    type="number",
-                )
-
-                yield Input(
-                    placeholder="Volumes",
-                    id="book_volumes",
-                    type="number",
-                )
-
-                yield Input(
-                    placeholder="Rating (0-20)",
-                    id="book_rating",
-                    type="number",
-                )
-
-                with Horizontal(id="book_buttons"):
-                    yield Button(
-                        "Quit",
-                        id="quit_book",
-                        variant="error",
-                    )
-
-                    yield Button(
-                        "Submit",
-                        id="submit_book",
-                        variant="success",
-                    )
-
-                yield Label(
-                    "",
-                    id="book_status",
-                    classes="status",
+                yield Button(
+                    "Cancel",
+                    variant="error",
+                    id="cancel",
                 )
 
         yield Footer()
 
-    def on_mount(self) -> None:
-        # Start on the Show page
-        self.show_show_page()
+    def on_mount(self):
+        self.query_one("#password").focus()
 
-    # =========================================================
-    # NAVIGATION
-    # =========================================================
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        button_id = event.button.id
-
-        if button_id == "show_page":
-            self.show_show_page()
-
-        elif button_id == "book_page":
-            self.show_book_page()
-
-        elif button_id == "submit_show":
-            self.insert_show()
-
-        elif button_id == "submit_book":
-            self.insert_book()
-
-        elif button_id in ("quit_show", "quit_book"):
-            self.exit()
-
-    def show_show_page(self) -> None:
-        self.query_one("#show_form").display = True
-        self.query_one("#book_form").display = False
-
-    def show_book_page(self) -> None:
-        self.query_one("#show_form").display = False
-        self.query_one("#book_form").display = True
-
-    # =========================================================
-    # SHOW
-    # =========================================================
-
-    def insert_show(self) -> None:
-        code = self.query_one("#show_code", Input).value.strip()
-        name = self.query_one("#show_name", Input).value.strip()
-        rating = self.query_one("#show_rating", Input).value.strip()
-        mg_code = self.query_one("#show_mg_code", Input).value.strip()
-
-        status = self.query_one("#show_status", Label)
-
-        # Required fields
-        if not code:
-            status.update("❌ Show code is required.")
+    def on_button_pressed(self, event: Button.Pressed):
+        if event.button.id == "cancel":
+            self.exit(False)
             return
 
-        if not name:
-            status.update("❌ Show name is required.")
-            return
+        if event.button.id == "decrypt":
+            password = self.query_one("#password").value
 
-        # Rating
-        if rating:
-            try:
-                rating_value = float(rating)
-            except ValueError:
-                status.update("❌ Show rating must be a number.")
-                return
-
-            if not 0 <= rating_value <= 20:
-                status.update(
-                    "❌ Show rating must be between 0 and 20."
+            if not password:
+                self.query_one("#status").update(
+                    "Password cannot be empty."
                 )
                 return
-        else:
-            rating_value = None
 
-        # Empty Manga Code -> NULL
-        mg_code_value = mg_code if mg_code else None
+            try:
+                decrypt_file(password)
+                validate_database()
+
+            except Exception:
+                # Delete anything produced by a failed attempt.
+                if PLAINTEXT_DB.exists():
+                    PLAINTEXT_DB.unlink()
+
+                self.query_one("#status").update(
+                    "❌ Incorrect password or invalid database."
+                )
+                return
+
+            self.exit(password)
+
+
+def main():
+    if not ENCRYPTED_DB.is_file():
+        print("ERROR: data.db.enc not found.")
+        return 1
+
+    if not APP.is_file():
+        print("ERROR: app.py not found.")
+        return 1
+
+    if PLAINTEXT_DB.exists():
+        print(
+            "ERROR: data.db already exists. "
+            "Refusing to overwrite it."
+        )
+        return 1
+
+    # Textual password UI.
+    password = PasswordScreen().run()
+
+    if not password:
+        return 0
+
+    try:
+        print("Starting app.py...")
+
+        process = subprocess.Popen(
+            [sys.executable, str(APP)],
+            cwd=BASE_DIR,
+        )
 
         try:
-            with sqlite3.connect(DB_PATH) as conn:
-                conn.execute(
-                    f"""
-                    INSERT INTO {SHOW_TABLE}
-                    (code, Name, Rating, mg_code)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (
-                        code,
-                        name,
-                        rating_value,
-                        mg_code_value,
-                    ),
-                )
+            exit_code = process.wait()
 
-                conn.commit()
+        except KeyboardInterrupt:
+            process.terminate()
 
-            status.update("✅ Show inserted successfully.")
-
-            self.query_one("#show_code", Input).value = ""
-            self.query_one("#show_name", Input).value = ""
-            self.query_one("#show_rating", Input).value = ""
-            self.query_one("#show_mg_code", Input).value = ""
-
-        except sqlite3.IntegrityError as e:
-            self.handle_integrity_error(
-                e,
-                status,
-                "Show",
-            )
-
-        except sqlite3.Error as e:
-            status.update(f"❌ SQLite error: {e}")
-
-    # =========================================================
-    # BOOK
-    # =========================================================
-
-    def insert_book(self) -> None:
-        code = self.query_one("#book_code", Input).value.strip()
-        name = self.query_one("#book_name", Input).value.strip()
-        reads = self.query_one("#book_reads", Input).value.strip()
-        volumes = self.query_one("#book_volumes", Input).value.strip()
-        rating = self.query_one("#book_rating", Input).value.strip()
-
-        status = self.query_one("#book_status", Label)
-
-        # Required fields
-        if not code:
-            status.update("❌ Book code is required.")
-            return
-
-        if not name:
-            status.update("❌ Book name is required.")
-            return
-
-        # Reads
-        if reads:
             try:
-                reads_value = int(reads)
-            except ValueError:
-                status.update("❌ Reads must be a whole number.")
-                return
+                exit_code = process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                exit_code = process.wait()
 
-            if reads_value < 0:
-                status.update("❌ Reads cannot be negative.")
-                return
-        else:
-            reads_value = None
+    finally:
+        # Always attempt to encrypt after app.py exits.
+        if PLAINTEXT_DB.exists():
+            print("Re-encrypting data.db...")
 
-        # Volumes
-        if volumes:
             try:
-                volumes_value = int(volumes)
-            except ValueError:
-                status.update("❌ Volumes must be a whole number.")
-                return
+                encrypt_file(password)
 
-            if volumes_value < 0:
-                status.update("❌ Volumes cannot be negative.")
-                return
-        else:
-            volumes_value = None
-
-        # Rating
-        if rating:
-            try:
-                rating_value = float(rating)
-            except ValueError:
-                status.update("❌ Book rating must be a number.")
-                return
-
-            if not 0 <= rating_value <= 20:
-                status.update(
-                    "❌ Book rating must be between 0 and 20."
+            except Exception as exc:
+                print(
+                    "CRITICAL ERROR: Could not re-encrypt "
+                    f"data.db: {exc}",
+                    file=sys.stderr,
                 )
-                return
-        else:
-            rating_value = None
-
-        try:
-            with sqlite3.connect(DB_PATH) as conn:
-                conn.execute(
-                    f"""
-                    INSERT INTO {BOOK_TABLE}
-                    (code, Name, Reads, Volumes, Rating)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        code,
-                        name,
-                        reads_value,
-                        volumes_value,
-                        rating_value,
-                    ),
+                print(
+                    "Plaintext data.db has NOT been deleted.",
+                    file=sys.stderr,
                 )
+                return 2
 
-                conn.commit()
+            # Only delete plaintext after successful encryption.
+            PLAINTEXT_DB.unlink()
 
-            status.update("✅ Book inserted successfully.")
+            print("Database encrypted.")
+            print("Plaintext database removed.")
 
-            self.query_one("#book_code", Input).value = ""
-            self.query_one("#book_name", Input).value = ""
-            self.query_one("#book_reads", Input).value = ""
-            self.query_one("#book_volumes", Input).value = ""
-            self.query_one("#book_rating", Input).value = ""
-
-        except sqlite3.IntegrityError as e:
-            self.handle_integrity_error(
-                e,
-                status,
-                "Book",
-            )
-
-        except sqlite3.Error as e:
-            status.update(f"❌ SQLite error: {e}")
-
-    # =========================================================
-    # DATABASE ERRORS
-    # =========================================================
-
-    def handle_integrity_error(
-        self,
-        error: sqlite3.IntegrityError,
-        status: Label,
-        record_type: str,
-    ) -> None:
-        error_text = str(error).lower()
-
-        if "unique constraint failed" in error_text:
-            # Get the column after the final "."
-            column = error_text.split(".")[-1].strip()
-
-            if column == "code":
-                status.update(
-                    f"❌ {record_type} code already exists."
-                )
-
-            elif column == "name":
-                status.update(
-                    f"❌ {record_type} name already exists."
-                )
-
-            elif column == "mg_code":
-                status.update(
-                    "❌ Manga code already exists."
-                )
-
-            else:
-                status.update(
-                    f"❌ Duplicate value in {column}."
-                )
-
-        elif "not null constraint failed" in error_text:
-            status.update(
-                f"❌ A required database field is missing."
-            )
-
-        else:
-            status.update(
-                f"❌ Database constraint error: {error}"
-            )
+    return exit_code
 
 
 if __name__ == "__main__":
-    AppTUI().run()
+    raise SystemExit(main())
