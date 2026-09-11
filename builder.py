@@ -1,21 +1,17 @@
-import base64
 import io
-import lzma
 import os
-import tarfile
+import zipfile
 
 
-EXTRACTOR_TEMPLATE = '''import base64,io,lzma,subprocess,sys,tarfile
-PAYLOAD="""{{PAYLOAD}}"""
-with tarfile.open(fileobj=io.BytesIO(lzma.decompress(base64.b85decode(PAYLOAD))),mode="r:") as archive: archive.extractall(".")
-subprocess.run([sys.executable,"main.py"])
-'''
+MAIN_MODULE = '''import subprocess,sys,zipfile
+with zipfile.ZipFile(sys.argv[0]) as archive: archive.extractall(".")
+subprocess.run([sys.executable,"main.py"],check=False)
+'''.encode("utf-8")
 
 
 def create_self_extractor(
     source_dir,
     selected_files,
-    template_path=None,
     output_py_path="self_extractor.py",
 ):
     """Compress selected files into a compact self-extracting script."""
@@ -24,9 +20,18 @@ def create_self_extractor(
     print("Compressing selected files...")
 
     archive_buffer = io.BytesIO()
-    with tarfile.open(
-        fileobj=archive_buffer, mode="w", format=tarfile.PAX_FORMAT
+    with zipfile.ZipFile(
+        archive_buffer,
+        mode="w",
+        compression=zipfile.ZIP_LZMA,
+        compresslevel=9,
     ) as archive:
+        archive.writestr(
+            "__main__.py",
+            MAIN_MODULE,
+            compress_type=zipfile.ZIP_STORED,
+        )
+
         for relative_path in selected_files:
             file_path = os.path.join(source_dir, relative_path)
 
@@ -35,27 +40,12 @@ def create_self_extractor(
                     f"Selected file does not exist: {file_path}"
                 )
 
-            archive.add(file_path, arcname=relative_path, recursive=False)
+            archive.write(file_path, arcname=relative_path)
 
-    payload = base64.b85encode(
-        lzma.compress(archive_buffer.getvalue(), preset=9)
-    ).decode("ascii")
+    with open(output_py_path, "wb") as f:
+        f.write(archive_buffer.getvalue())
 
-    if template_path is not None:
-        if not os.path.exists(template_path):
-            raise FileNotFoundError(f"Could not find template file at: {template_path}")
-        with open(template_path, "r", encoding="utf-8") as f:
-            template_content = f.read()
-    else:
-        template_content = EXTRACTOR_TEMPLATE
-
-    final_script = template_content.replace(
-        "{{PAYLOAD}}",
-        payload
-    )
-
-    with open(output_py_path, "w", encoding="utf-8") as f:
-        f.write(final_script)
+    os.chmod(output_py_path, 0o755)
 
     print(
         f"Generated standalone self-extractor file: "

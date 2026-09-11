@@ -60,8 +60,6 @@ def decrypt_file(password: str):
 
     key = derive_key(password, salt)
 
-    # Raises an exception for an incorrect password
-    # or modified encrypted data.
     plaintext = AESGCM(key).decrypt(
         nonce,
         ciphertext,
@@ -133,6 +131,7 @@ def encrypt_file(password: str):
         if temp.exists():
             temp.unlink()
 
+
 class PasswordScreen(App):
     CSS = """
     Screen {
@@ -156,10 +155,7 @@ class PasswordScreen(App):
         margin: 1 0;
     }
 
-    #buttons {
-        height: 3;
-        align: center middle;
-    }
+    #buttons { width: 100%; height: 9; align: center middle; }
 
     Button {
         margin: 0 1;
@@ -201,6 +197,12 @@ class PasswordScreen(App):
                 )
 
                 yield Button(
+                    "Change Password",
+                    variant="primary",
+                    id="change_password",
+                )
+
+                yield Button(
                     "Cancel",
                     variant="error",
                     id="cancel",
@@ -226,7 +228,6 @@ class PasswordScreen(App):
             validate_database()
 
         except Exception:
-            # Remove anything produced by a failed attempt.
             if PLAINTEXT_DB.exists():
                 PLAINTEXT_DB.unlink()
 
@@ -238,18 +239,89 @@ class PasswordScreen(App):
             password_input.focus()
             return
 
-        # Correct password and valid SQLite database.
+        # Return both the old password and the password
+        # that should be used for re-encryption.
         self.exit(password)
+
+    def change_password(self):
+        """
+        First verify the current password, then ask for
+        the new password.
+        """
+        password_input = self.query_one("#password")
+        current_password = password_input.value
+
+        if not current_password:
+            self.query_one("#status").update(
+                "Enter the current password first."
+            )
+            password_input.focus()
+            return
+
+        try:
+            decrypt_file(current_password)
+            validate_database()
+
+        except Exception:
+            if PLAINTEXT_DB.exists():
+                PLAINTEXT_DB.unlink()
+
+            self.query_one("#status").update(
+                "❌ Incorrect current password."
+            )
+
+            password_input.value = ""
+            password_input.focus()
+            return
+
+        # Current password is valid.
+        #
+        # Change the input into a new-password field.
+        password_input.value = ""
+        password_input.placeholder = "Enter NEW password"
+        password_input.password = True
+
+        self.query_one("#status").update(
+            "Enter the new password and press Enter."
+        )
+
+        # Store the current password so the submit handler
+        # knows we are in password-change mode.
+        self._current_password = current_password
+        self._changing_password = True
+
+        password_input.focus()
+
+    def submit_new_password(self):
+        new_password = self.query_one("#password").value
+
+        if not new_password:
+            self.query_one("#status").update(
+                "New password cannot be empty."
+            )
+            return
+
+        if new_password == self._current_password:
+            self.query_one("#status").update(
+                "New password must be different."
+            )
+            return
+
+        # Database is already decrypted and validated.
+        # Return the NEW password so main() uses it when
+        # re-encrypting the database.
+        self.exit(new_password)
 
     def on_input_submitted(
         self,
         event: Input.Submitted,
     ):
-        """
-        Pressing Enter while the password field is focused
-        submits the password.
-        """
-        if event.input.id == "password":
+        if event.input.id != "password":
+            return
+
+        if getattr(self, "_changing_password", False):
+            self.submit_new_password()
+        else:
             self.try_decrypt()
 
     def on_button_pressed(self, event: Button.Pressed):
@@ -259,6 +331,10 @@ class PasswordScreen(App):
 
         if event.button.id == "decrypt":
             self.try_decrypt()
+            return
+
+        if event.button.id == "change_password":
+            self.change_password()
 
 
 def main():
@@ -278,6 +354,10 @@ def main():
         return 1
 
     # Textual password UI.
+    #
+    # This now returns the password that should be used
+    # for the FINAL encryption. If the user selected
+    # "Change Password", this is the NEW password.
     password = PasswordScreen().run()
 
     if not password:
@@ -304,7 +384,8 @@ def main():
                 exit_code = process.wait()
 
     finally:
-        # Always attempt to encrypt after app.py exits.
+        # Always encrypt using the password returned by
+        # PasswordScreen.
         if PLAINTEXT_DB.exists():
             print("Re-encrypting data.db...")
 
@@ -323,23 +404,25 @@ def main():
                 )
                 return 2
 
-            # Only delete plaintext after successful encryption.
             PLAINTEXT_DB.unlink()
 
             print("Database encrypted.")
             print("Plaintext database removed.")
             print("Rebuilding the self-extractor...")
+
             selected_files = [
                 "data.db.enc",
                 "app.py",
                 "main.py",
                 "builder.py",
             ]
+
             create_self_extractor(
                 ".",
                 selected_files,
                 output_py_path="self_extractor.py",
             )
+
             for file in selected_files:
                 if os.path.exists(file):
                     os.remove(file)
