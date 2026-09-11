@@ -19,7 +19,7 @@ def extract_payload(extract_to_dir="."):
     with zipfile.ZipFile(zip_buffer, "r") as zipf:
         zipf.extractall(path=extract_to_dir)
     
-    print(f"Successfully extracted all files to: {{os.path.abspath(extract_to_dir)}}")
+    print(f"Successfully extracted all files to: {os.path.abspath(extract_to_dir)}")
 
 if __name__ == "__main__":
     extract_payload()
