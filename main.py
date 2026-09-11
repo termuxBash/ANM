@@ -329,17 +329,15 @@ def main():
             print("Database encrypted.")
             print("Plaintext database removed.")
             print("Rebuilding the self-extractor...")
-            selected_files=[
-                                "data.db.enc",
-                                "input.py",
-                                "app.py",
-                                "main.py",
-                                "builder.py",
-                            ]
+            selected_files = [
+                "data.db.enc",
+                "app.py",
+                "main.py",
+                "builder.py",
+            ]
             create_self_extractor(
                 ".",
                 selected_files,
-                template_path="input.py",
                 output_py_path="self_extractor.py",
             )
             for file in selected_files:

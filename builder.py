@@ -1,31 +1,32 @@
 import base64
 import io
+import lzma
 import os
-import zipfile
+import tarfile
+
+
+EXTRACTOR_TEMPLATE = '''import base64,io,lzma,subprocess,sys,tarfile
+PAYLOAD="""{{PAYLOAD}}"""
+with tarfile.open(fileobj=io.BytesIO(lzma.decompress(base64.b85decode(PAYLOAD))),mode="r:") as archive: archive.extractall(".")
+subprocess.run([sys.executable,"main.py"])
+'''
 
 
 def create_self_extractor(
     source_dir,
     selected_files,
-    template_path="input.py",
+    template_path=None,
     output_py_path="self_extractor.py",
 ):
-    """Compress only selected files into a self-extracting script."""
+    """Compress selected files into a compact self-extracting script."""
     source_dir = os.path.abspath(source_dir)
-
-    if not os.path.exists(template_path):
-        raise FileNotFoundError(
-            f"Could not find template file at: {template_path}"
-        )
 
     print("Compressing selected files...")
 
-    zip_buffer = io.BytesIO()
-
-    with zipfile.ZipFile(
-        zip_buffer, "w", compression=zipfile.ZIP_LZMA
-    ) as zipf:
-
+    archive_buffer = io.BytesIO()
+    with tarfile.open(
+        fileobj=archive_buffer, mode="w", format=tarfile.PAX_FORMAT
+    ) as archive:
         for relative_path in selected_files:
             file_path = os.path.join(source_dir, relative_path)
 
@@ -34,29 +35,25 @@ def create_self_extractor(
                     f"Selected file does not exist: {file_path}"
                 )
 
-            # Keep the relative path inside the ZIP
-            zipf.write(
-                file_path,
-                arcname=relative_path
-            )
+            archive.add(file_path, arcname=relative_path, recursive=False)
 
-    # Base64 encode ZIP
-    zip_buffer.seek(0)
-    b64_data = base64.b64encode(
-        zip_buffer.read()
-    ).decode("utf-8")
+    payload = base64.b85encode(
+        lzma.compress(archive_buffer.getvalue(), preset=9)
+    ).decode("ascii")
 
-    # Read template
-    with open(template_path, "r", encoding="utf-8") as f:
-        template_content = f.read()
+    if template_path is not None:
+        if not os.path.exists(template_path):
+            raise FileNotFoundError(f"Could not find template file at: {template_path}")
+        with open(template_path, "r", encoding="utf-8") as f:
+            template_content = f.read()
+    else:
+        template_content = EXTRACTOR_TEMPLATE
 
-    # Inject payload
     final_script = template_content.replace(
         "{{PAYLOAD}}",
-        b64_data
+        payload
     )
 
-    # Write output
     with open(output_py_path, "w", encoding="utf-8") as f:
         f.write(final_script)
 
@@ -71,11 +68,9 @@ if __name__ == "__main__":
         ".",
         selected_files=[
             "data.db.enc",
-            "input.py",
             "app.py",
             "main.py",
             "builder.py",
         ],
-        template_path="input.py",
         output_py_path="self_extractor.py",
     )
