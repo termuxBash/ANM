@@ -10,7 +10,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from textual.app import App, ComposeResult
-from textual.containers import Container
+from textual.containers import Container, Horizontal
 from textual.widgets import Button, Footer, Header, Input, Label
 
 from builder import create_self_extractor
@@ -21,6 +21,13 @@ BASE_DIR = Path(__file__).resolve().parent
 ENCRYPTED_DB = BASE_DIR / "data.db.enc"
 PLAINTEXT_DB = BASE_DIR / "data.db"
 APP = BASE_DIR / "app.py"
+EXTRACTED_FILES = (
+    "__main__.py",
+    "data.db.enc",
+    "app.py",
+    "main.py",
+    "builder.py",
+)
 
 MAGIC = b"ENCDB01"
 SALT_SIZE = 16
@@ -132,6 +139,15 @@ def encrypt_file(password: str):
             temp.unlink()
 
 
+def cleanup_extracted_files():
+    for name in EXTRACTED_FILES:
+        path = BASE_DIR / name
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 class PasswordScreen(App):
     CSS = """
     Screen {
@@ -155,9 +171,15 @@ class PasswordScreen(App):
         margin: 1 0;
     }
 
-    #buttons { width: 100%; height: 9; align: center middle; }
+    #buttons {
+        width: 100%;
+        height: auto;
+        align: center middle;
+    }
 
     Button {
+        width: 1fr;
+        height: 3;
         margin: 0 1;
     }
 
@@ -189,7 +211,7 @@ class PasswordScreen(App):
 
             yield Label("", id="status")
 
-            with Container(id="buttons"):
+            with Horizontal(id="buttons"):
                 yield Button(
                     "Decrypt",
                     variant="success",
@@ -361,6 +383,7 @@ def main():
     password = PasswordScreen().run()
 
     if not password:
+        cleanup_extracted_files()
         return 0
 
     try:
@@ -410,12 +433,7 @@ def main():
             print("Plaintext database removed.")
             print("Rebuilding the self-extractor...")
 
-            selected_files = [
-                "data.db.enc",
-                "app.py",
-                "main.py",
-                "builder.py",
-            ]
+            selected_files = list(EXTRACTED_FILES[1:])
 
             create_self_extractor(
                 ".",
@@ -423,9 +441,7 @@ def main():
                 output_py_path="self_extractor.py",
             )
 
-            for file in selected_files:
-                if os.path.exists(file):
-                    os.remove(file)
+            cleanup_extracted_files()
 
     return exit_code
 
