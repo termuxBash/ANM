@@ -155,7 +155,7 @@ class PasswordScreen(App):
     }
 
     #box {
-        width: 60;
+        width: 72;
         height: auto;
         border: round cyan;
         padding: 2 4;
@@ -173,14 +173,15 @@ class PasswordScreen(App):
 
     #buttons {
         width: 100%;
-        height: auto;
+        height: 5;
         align: center middle;
     }
 
-    Button {
-        width: 1fr;
+    #buttons Button {
+        width: 20;
         height: 3;
         margin: 0 1;
+        content-align: center middle;
     }
 
     #status {
