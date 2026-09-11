@@ -332,9 +332,8 @@ def main():
             selected_files=[
                                 "data.db.enc",
                                 "input.py",
-                                "extractor.py",
+                                "app.py",
                                 "main.py",
-                                "EncryptedDB.py",
                                 "builder.py",
                             ]
             create_self_extractor(
