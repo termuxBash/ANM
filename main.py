@@ -343,6 +343,9 @@ def main():
                 template_path="input.py",
                 output_py_path="self_extractor.py",
             )
+            for file in selected_files:
+                if os.path.exists(file):
+                    os.remove(file)
 
     return exit_code
 
