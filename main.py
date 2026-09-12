@@ -1,5 +1,54 @@
 #!/usr/bin/env python3
 
+# =========================================================
+# AUTO-INSTALL REQUIRED THIRD-PARTY DEPENDENCIES
+# =========================================================
+
+import importlib
+import subprocess
+import sys
+
+
+REQUIRED_PACKAGES = {
+    "cryptography": "cryptography",
+    "textual": "textual",
+    "httpx": "httpx",
+}
+
+
+def ensure_dependencies():
+    missing = []
+
+    for module_name, package_name in REQUIRED_PACKAGES.items():
+        try:
+            importlib.import_module(module_name)
+        except ImportError:
+            missing.append(package_name)
+
+    if not missing:
+        return
+
+    print("Missing dependencies detected:")
+    for package in missing:
+        print(f"  - {package}")
+
+    print("\nInstalling missing dependencies...")
+
+    subprocess.check_call(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            *missing,
+        ]
+    )
+
+    print("Dependencies installed successfully.\n")
+
+
+ensure_dependencies()
+
 import argparse
 import base64
 import hashlib
