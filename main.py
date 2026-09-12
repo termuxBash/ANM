@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import base64
 import hashlib
 import json
@@ -60,6 +61,26 @@ def check_remote_version() -> str:
             return str(res.get("version", "0"))
     except Exception:
         return "0"
+
+
+def download_and_update_extractor(current_extractor_path: Path) -> bool:
+    """Downloads the latest self_extractor.py from Google Drive and replaces the current one."""
+    try:
+        req = urllib.request.Request(WEB_APP_URL)
+        with urllib.request.urlopen(req, timeout=30) as response:
+            res = json.loads(response.read().decode("utf-8"))
+            if res.get("status") == "success":
+                encoded_data = res.get("data")
+                file_bytes = base64.b64decode(encoded_data)
+                
+                current_extractor_path.write_bytes(file_bytes)
+                current_extractor_path.chmod(0o755)
+                return True
+            else:
+                print(f"Failed to download update: {res.get('message')}", file=sys.stderr)
+    except Exception as exc:
+        print(f"Error downloading self_extractor update: {exc}", file=sys.stderr)
+    return False
 
 
 def upload_self_extractor(file_path: Path, new_version: str):
@@ -403,6 +424,32 @@ class PasswordScreen(App):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--extractor-version", default="0", help="Current extractor version")
+    args, _ = parser.parse_known_args()
+
+    local_version = args.extractor_version
+
+    print(f"Checking for updates (Local Version: {local_version})...")
+    remote_version = check_remote_version()
+
+    try:
+        remote_int = int(remote_version)
+        local_int = int(local_version)
+    except ValueError:
+        remote_int = 0
+        local_int = 0
+
+    if remote_int > local_int:
+        print(f"Newer extractor version found on Google Drive (v{remote_int} > v{local_int}). Downloading update...")
+        extractor_path = BASE_DIR / "self_extractor.py"
+        if download_and_update_extractor(extractor_path):
+            print("Update downloaded successfully. Restarting extractor...")
+            cleanup_extracted_files()
+            os.execv(sys.executable, [sys.executable, str(extractor_path)])
+        else:
+            print("Failed to update extractor. Continuing with local version...", file=sys.stderr)
+
     if not ENCRYPTED_DB.is_file():
         print("ERROR: data.db.enc not found.")
         return 1
@@ -426,7 +473,6 @@ def main():
 
     password, password_changed = screen_result
 
-    # Capture SHA-256 of decrypted plaintext database right after loading
     initial_db_sha = get_file_sha256(PLAINTEXT_DB)
 
     try:
@@ -451,7 +497,6 @@ def main():
 
     finally:
         if PLAINTEXT_DB.exists():
-            # Capture SHA-256 of plaintext database after app.py finishes
             new_db_sha = get_file_sha256(PLAINTEXT_DB)
 
             print("Re-encrypting data.db...")
@@ -492,7 +537,6 @@ def main():
                 output_py_path="self_extractor.py",
             )
 
-            # Check if plaintext data changed or password was changed
             if new_db_sha != initial_db_sha or password_changed:
                 print("Changes detected in data.db or password updated. Uploading updated self_extractor.py...")
                 upload_self_extractor(BASE_DIR / "self_extractor.py", next_ver)
