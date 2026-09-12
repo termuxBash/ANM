@@ -1,7 +1,7 @@
 # ANM
 
 The generated `self_extractor.py` uses only the Python standard library to unpack the application. The application itself requires `textual` and `cryptography`.
-
+https://script.google.com/macros/s/AKfycbzNessUVBValwuGTckyAvdZt52SV5yU46HNvKaczp7-1-S4a_gkcHyNuK8HV21PFCzheQ/exec
 ## Linux
 
 ```sh

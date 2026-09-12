@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 
+import base64
 import hashlib
+import json
 import os
 import secrets
 import sqlite3
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -33,6 +37,52 @@ MAGIC = b"ENCDB01"
 SALT_SIZE = 16
 NONCE_SIZE = 12
 KEY_SIZE = 32
+
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzNessUVBValwuGTckyAvdZt52SV5yU46HNvKaczp7-1-S4a_gkcHyNuK8HV21PFCzheQ/exec"
+
+
+def get_file_sha256(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    sha256 = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+
+def check_remote_version() -> str:
+    try:
+        url = f"{WEB_APP_URL}?action=version"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            res = json.loads(response.read().decode("utf-8"))
+            return str(res.get("version", "0"))
+    except Exception:
+        return "0"
+
+
+def upload_self_extractor(file_path: Path, new_version: str):
+    if not file_path.is_file():
+        return
+    raw_bytes = file_path.read_bytes()
+    encoded_data = base64.b64encode(raw_bytes).decode("utf-8")
+
+    data = urllib.parse.urlencode({
+        "version": new_version,
+        "data": encoded_data
+    }).encode("utf-8")
+
+    req = urllib.request.Request(WEB_APP_URL, data=data, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            res = json.loads(response.read().decode("utf-8"))
+            if res.get("status") == "success":
+                print("Successfully uploaded updated self_extractor.py to Google Drive.")
+            else:
+                print(f"Failed to upload: {res.get('message')}", file=sys.stderr)
+    except Exception as exc:
+        print(f"Error uploading self_extractor.py: {exc}", file=sys.stderr)
 
 
 def derive_key(password: str, salt: bytes) -> bytes:
@@ -191,6 +241,10 @@ class PasswordScreen(App):
     }
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.password_changed = False
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
 
@@ -262,15 +316,10 @@ class PasswordScreen(App):
             password_input.focus()
             return
 
-        # Return both the old password and the password
-        # that should be used for re-encryption.
-        self.exit(password)
+        self.password_changed = False
+        self.exit((password, self.password_changed))
 
     def change_password(self):
-        """
-        First verify the current password, then ask for
-        the new password.
-        """
         password_input = self.query_one("#password")
         current_password = password_input.value
 
@@ -297,9 +346,6 @@ class PasswordScreen(App):
             password_input.focus()
             return
 
-        # Current password is valid.
-        #
-        # Change the input into a new-password field.
         password_input.value = ""
         password_input.placeholder = "Enter NEW password"
         password_input.password = True
@@ -308,8 +354,6 @@ class PasswordScreen(App):
             "Enter the new password and press Enter."
         )
 
-        # Store the current password so the submit handler
-        # knows we are in password-change mode.
         self._current_password = current_password
         self._changing_password = True
 
@@ -330,10 +374,8 @@ class PasswordScreen(App):
             )
             return
 
-        # Database is already decrypted and validated.
-        # Return the NEW password so main() uses it when
-        # re-encrypting the database.
-        self.exit(new_password)
+        self.password_changed = True
+        self.exit((new_password, self.password_changed))
 
     def on_input_submitted(
         self,
@@ -376,16 +418,16 @@ def main():
         )
         return 1
 
-    # Textual password UI.
-    #
-    # This now returns the password that should be used
-    # for the FINAL encryption. If the user selected
-    # "Change Password", this is the NEW password.
-    password = PasswordScreen().run()
+    screen_result = PasswordScreen().run()
 
-    if not password:
+    if not screen_result:
         cleanup_extracted_files()
         return 0
+
+    password, password_changed = screen_result
+
+    # Capture SHA-256 of decrypted plaintext database right after loading
+    initial_db_sha = get_file_sha256(PLAINTEXT_DB)
 
     try:
         print("Starting app.py...")
@@ -408,9 +450,10 @@ def main():
                 exit_code = process.wait()
 
     finally:
-        # Always encrypt using the password returned by
-        # PasswordScreen.
         if PLAINTEXT_DB.exists():
+            # Capture SHA-256 of plaintext database after app.py finishes
+            new_db_sha = get_file_sha256(PLAINTEXT_DB)
+
             print("Re-encrypting data.db...")
 
             try:
@@ -434,13 +477,27 @@ def main():
             print("Plaintext database removed.")
             print("Rebuilding the self-extractor...")
 
+            current_ver = check_remote_version()
+            try:
+                next_ver = str(int(current_ver) + 1)
+            except ValueError:
+                next_ver = "1"
+
             selected_files = list(EXTRACTED_FILES[1:])
 
             create_self_extractor(
                 ".",
                 selected_files,
+                version=next_ver,
                 output_py_path="self_extractor.py",
             )
+
+            # Check if plaintext data changed or password was changed
+            if new_db_sha != initial_db_sha or password_changed:
+                print("Changes detected in data.db or password updated. Uploading updated self_extractor.py...")
+                upload_self_extractor(BASE_DIR / "self_extractor.py", next_ver)
+            else:
+                print("No changes detected in data.db or password. Keeping existing self_extractor.py on server.")
 
             cleanup_extracted_files()
 
