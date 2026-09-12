@@ -39,8 +39,7 @@ SALT_SIZE = 16
 NONCE_SIZE = 12
 KEY_SIZE = 32
 
-WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzNessUVBValwuGTckyAvdZt52SV5yU46HNvKaczp7-1-S4a_gkcHyNuK8HV21PFCzheQ/exec"
-
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzdizgIWCIuePy9MfodipQRPCU0C1Y5du7tX-v0jvsYxZq4FEpcloyb08rBroX1lQGV/exec"
 
 def get_file_sha256(path: Path) -> str:
     if not path.is_file():

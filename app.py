@@ -1,11 +1,14 @@
 import sqlite3
-
+import httpx
+from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, Input, Label
 
-
 DB_PATH = "data.db"
+
+# Replace this with your deployed Google Apps Script Web App URL
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzdizgIWCIuePy9MfodipQRPCU0C1Y5du7tX-v0jvsYxZq4FEpcloyb08rBroX1lQGV/exec"
 
 # Database table names
 SHOW_TABLE = "Anime"
@@ -66,7 +69,6 @@ class AppTUI(App):
         margin: 0 2;
     }
 
-
     #submit {
         margin-right: 1;
         background: $success;
@@ -88,7 +90,6 @@ class AppTUI(App):
         yield Header()
 
         with Container(id="form"):
-
             # Page navigation
             with Horizontal(id="navigation"):
                 yield Button("Add Show", id="show_page")
@@ -97,111 +98,41 @@ class AppTUI(App):
             # -------------------------------------------------
             # SHOW PAGE
             # -------------------------------------------------
-
             with Vertical(id="show_form", classes="page"):
-
                 yield Label("Add Show", id="show_title")
 
-                yield Input(
-                    placeholder="Code *",
-                    id="show_code",
-                )
-
-                yield Input(
-                    placeholder="Name *",
-                    id="show_name",
-                )
-
-                yield Input(
-                    placeholder="Rating (0-20)",
-                    id="show_rating",
-                    type="number",
-                )
-
-                yield Input(
-                    placeholder="Manga Code",
-                    id="show_mg_code",
-                )
+                yield Input(placeholder="Code *", id="show_code")
+                yield Input(placeholder="Name *", id="show_name")
+                yield Input(placeholder="Rating (0-20)", id="show_rating", type="number")
+                yield Input(placeholder="Manga Code", id="show_mg_code")
 
                 with Horizontal(id="show_buttons"):
-                    yield Button(
-                        "Quit",
-                        id="quit_show",
-                        variant="error",
-                    )
-                    yield Button(
-                        "Submit",
-                        id="submit_show",
-                        variant="success",
-                    )
+                    yield Button("Quit", id="quit_show", variant="error")
+                    yield Button("Submit", id="submit_show", variant="success")
 
-                    
-
-                yield Label(
-                    "",
-                    id="show_status",
-                    classes="status",
-                )
+                yield Label("", id="show_status", classes="status")
 
             # -------------------------------------------------
             # BOOK PAGE
             # -------------------------------------------------
-
             with Vertical(id="book_form", classes="page"):
-
                 yield Label("Labeled Books", id="book_title")
 
-                yield Input(
-                    placeholder="Code *",
-                    id="book_code",
-                )
-
-                yield Input(
-                    placeholder="Name *",
-                    id="book_name",
-                )
-
-                yield Input(
-                    placeholder="Reads",
-                    id="book_reads",
-                    type="number",
-                )
-
-                yield Input(
-                    placeholder="Volumes",
-                    id="book_volumes",
-                    type="number",
-                )
-
-                yield Input(
-                    placeholder="Rating (0-20)",
-                    id="book_rating",
-                    type="number",
-                )
+                yield Input(placeholder="Code *", id="book_code")
+                yield Input(placeholder="Name *", id="book_name")
+                yield Input(placeholder="Reads", id="book_reads", type="number")
+                yield Input(placeholder="Volumes", id="book_volumes", type="number")
+                yield Input(placeholder="Rating (0-20)", id="book_rating", type="number")
 
                 with Horizontal(id="book_buttons"):
-                    yield Button(
-                        "Quit",
-                        id="quit_book",
-                        variant="error",
-                    )
+                    yield Button("Quit", id="quit_book", variant="error")
+                    yield Button("Submit", id="submit_book", variant="success")
 
-                    yield Button(
-                        "Submit",
-                        id="submit_book",
-                        variant="success",
-                    )
-
-                yield Label(
-                    "",
-                    id="book_status",
-                    classes="status",
-                )
+                yield Label("", id="book_status", classes="status")
 
         yield Footer()
 
     def on_mount(self) -> None:
-        # Start on the Show page
         self.show_show_page()
 
     # =========================================================
@@ -213,16 +144,12 @@ class AppTUI(App):
 
         if button_id == "show_page":
             self.show_show_page()
-
         elif button_id == "book_page":
             self.show_book_page()
-
         elif button_id == "submit_show":
             self.insert_show()
-
         elif button_id == "submit_book":
             self.insert_book()
-
         elif button_id in ("quit_show", "quit_book"):
             self.exit()
 
@@ -233,6 +160,24 @@ class AppTUI(App):
     def show_book_page(self) -> None:
         self.query_one("#show_form").display = False
         self.query_one("#book_form").display = True
+
+    # =========================================================
+    # BACKGROUND WORKER FOR GOOGLE SHEETS POST
+    # =========================================================
+
+    @work(exclusive=False)
+    async def post_data_to_sheets(self, payload: dict, status_label: Label) -> None:
+        """Sends submission payload asynchronously to Google Apps Script."""
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                res = await client.post(WEB_APP_URL, params=payload)
+                data = res.json()
+                if data.get("status") == "success":
+                    status_label.update("✅ Inserted to SQLite & synced to Google Sheets!")
+                else:
+                    status_label.update(f"⚠️ SQLite OK, Sheet Error: {data.get('message')}")
+        except Exception as err:
+            status_label.update(f"⚠️ SQLite OK, Sync failed: {err}")
 
     # =========================================================
     # SHOW
@@ -246,7 +191,6 @@ class AppTUI(App):
 
         status = self.query_one("#show_status", Label)
 
-        # Required fields
         if not code:
             status.update("❌ Show code is required.")
             return
@@ -255,7 +199,6 @@ class AppTUI(App):
             status.update("❌ Show name is required.")
             return
 
-        # Rating
         if rating:
             try:
                 rating_value = float(rating)
@@ -264,14 +207,11 @@ class AppTUI(App):
                 return
 
             if not 0 <= rating_value <= 20:
-                status.update(
-                    "❌ Show rating must be between 0 and 20."
-                )
+                status.update("❌ Show rating must be between 0 and 20.")
                 return
         else:
             rating_value = None
 
-        # Empty Manga Code -> NULL
         mg_code_value = mg_code if mg_code else None
 
         try:
@@ -282,30 +222,30 @@ class AppTUI(App):
                     (code, Name, Rating, mg_code)
                     VALUES (?, ?, ?, ?)
                     """,
-                    (
-                        code,
-                        name,
-                        rating_value,
-                        mg_code_value,
-                    ),
+                    (code, name, rating_value, mg_code_value),
                 )
-
                 conn.commit()
 
-            status.update("✅ Show inserted successfully.")
+            status.update("⏳ Inserted to SQLite, syncing to Google Sheets...")
 
+            # Clear inputs
             self.query_one("#show_code", Input).value = ""
             self.query_one("#show_name", Input).value = ""
             self.query_one("#show_rating", Input).value = ""
             self.query_one("#show_mg_code", Input).value = ""
 
-        except sqlite3.IntegrityError as e:
-            self.handle_integrity_error(
-                e,
-                status,
-                "Show",
-            )
+            # Background POST payload
+            payload = {
+                "action": "add_show",
+                "code": code,
+                "name": name,
+                "rating": str(rating_value) if rating_value is not None else "",
+                "mg_code": mg_code_value or "",
+            }
+            self.post_data_to_sheets(payload, status)
 
+        except sqlite3.IntegrityError as e:
+            self.handle_integrity_error(e, status, "Show")
         except sqlite3.Error as e:
             status.update(f"❌ SQLite error: {e}")
 
@@ -322,7 +262,6 @@ class AppTUI(App):
 
         status = self.query_one("#book_status", Label)
 
-        # Required fields
         if not code:
             status.update("❌ Book code is required.")
             return
@@ -331,7 +270,6 @@ class AppTUI(App):
             status.update("❌ Book name is required.")
             return
 
-        # Reads
         if reads:
             try:
                 reads_value = int(reads)
@@ -345,7 +283,6 @@ class AppTUI(App):
         else:
             reads_value = None
 
-        # Volumes
         if volumes:
             try:
                 volumes_value = int(volumes)
@@ -359,7 +296,6 @@ class AppTUI(App):
         else:
             volumes_value = None
 
-        # Rating
         if rating:
             try:
                 rating_value = float(rating)
@@ -368,9 +304,7 @@ class AppTUI(App):
                 return
 
             if not 0 <= rating_value <= 20:
-                status.update(
-                    "❌ Book rating must be between 0 and 20."
-                )
+                status.update("❌ Book rating must be between 0 and 20.")
                 return
         else:
             rating_value = None
@@ -383,32 +317,32 @@ class AppTUI(App):
                     (code, Name, Reads, Volumes, Rating)
                     VALUES (?, ?, ?, ?, ?)
                     """,
-                    (
-                        code,
-                        name,
-                        reads_value,
-                        volumes_value,
-                        rating_value,
-                    ),
+                    (code, name, reads_value, volumes_value, rating_value),
                 )
-
                 conn.commit()
 
-            status.update("✅ Book inserted successfully.")
+            status.update("⏳ Inserted to SQLite, syncing to Google Sheets...")
 
+            # Clear inputs
             self.query_one("#book_code", Input).value = ""
             self.query_one("#book_name", Input).value = ""
             self.query_one("#book_reads", Input).value = ""
             self.query_one("#book_volumes", Input).value = ""
             self.query_one("#book_rating", Input).value = ""
 
-        except sqlite3.IntegrityError as e:
-            self.handle_integrity_error(
-                e,
-                status,
-                "Book",
-            )
+            # Background POST payload
+            payload = {
+                "action": "add_book",
+                "code": code,
+                "name": name,
+                "reads": str(reads_value) if reads_value is not None else "1",
+                "volumes": str(volumes_value) if volumes_value is not None else "1",
+                "rating": str(rating_value) if rating_value is not None else "0",
+            }
+            self.post_data_to_sheets(payload, status)
 
+        except sqlite3.IntegrityError as e:
+            self.handle_integrity_error(e, status, "Book")
         except sqlite3.Error as e:
             status.update(f"❌ SQLite error: {e}")
 
@@ -425,38 +359,21 @@ class AppTUI(App):
         error_text = str(error).lower()
 
         if "unique constraint failed" in error_text:
-            # Get the column after the final "."
             column = error_text.split(".")[-1].strip()
 
             if column == "code":
-                status.update(
-                    f"❌ {record_type} code already exists."
-                )
-
+                status.update(f"❌ {record_type} code already exists.")
             elif column == "name":
-                status.update(
-                    f"❌ {record_type} name already exists."
-                )
-
+                status.update(f"❌ {record_type} name already exists.")
             elif column == "mg_code":
-                status.update(
-                    "❌ Manga code already exists."
-                )
-
+                status.update("❌ Manga code already exists.")
             else:
-                status.update(
-                    f"❌ Duplicate value in {column}."
-                )
+                status.update(f"❌ Duplicate value in {column}.")
 
         elif "not null constraint failed" in error_text:
-            status.update(
-                f"❌ A required database field is missing."
-            )
-
+            status.update("❌ A required database field is missing.")
         else:
-            status.update(
-                f"❌ Database constraint error: {error}"
-            )
+            status.update(f"❌ Database constraint error: {error}")
 
 
 if __name__ == "__main__":
